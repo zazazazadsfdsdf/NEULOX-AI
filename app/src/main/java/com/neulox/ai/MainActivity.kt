@@ -44,6 +44,7 @@ private fun NeuloxApp() {
     val prefs = remember { context.getSharedPreferences("neulox_settings", 0) }
     var tab by remember { mutableStateOf("Чат") }
     var apiKey by remember { mutableStateOf(prefs.getString("gemini_api_key", "") ?: "") }
+    var modelId by remember { mutableStateOf(prefs.getString("gemini_model", "gemini-3.5-flash-lite") ?: "gemini-3.5-flash-lite") }
     var draft by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val messages = remember { mutableStateListOf<Pair<Boolean, String>>() }
@@ -106,7 +107,18 @@ private fun NeuloxApp() {
                             label = { Text("Gemini API key") },
                             singleLine = true
                         )
-                        Text("Модель: gemini-2.5-flash-lite", color = Color.LightGray, fontSize = 13.sp)
+                        Text("Модель Gemini API", color = Color.LightGray, fontSize = 13.sp)
+                        OutlinedTextField(
+                            value = modelId,
+                            onValueChange = {
+                                modelId = it.trim()
+                                prefs.edit().putString("gemini_model", it.trim()).apply()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("ID модели") },
+                            singleLine = true
+                        )
+                        Text("По умолчанию: gemini-3.5-flash-lite. Также можно указать gemini-3.5-flash, если он доступен для твоего ключа.", color = Color.Gray, fontSize = 12.sp)
                         Text("Бесплатный тариф имеет ограничения Google по запросам.", color = Color.Gray, fontSize = 12.sp)
                     }
                 }
@@ -147,7 +159,7 @@ private fun NeuloxApp() {
                                 busy = true
                                 val coding = tab == "Код"
                                 scope.launch {
-                                    val answer = withContext(Dispatchers.IO) { requestGemini(apiKey, prompt, coding) }
+                                    val answer = withContext(Dispatchers.IO) { requestGemini(apiKey, modelId, prompt, coding) }
                                     messages.add(false to answer)
                                     busy = false
                                 }
@@ -162,11 +174,11 @@ private fun NeuloxApp() {
     }
 }
 
-private fun requestGemini(key: String, prompt: String, coding: Boolean): String {
+private fun requestGemini(key: String, modelId: String, prompt: String, coding: Boolean): String {
     if (key.isBlank()) return "Открой «Настройки» и добавь бесплатный Gemini API-ключ из https://aistudio.google.com/app/apikey"
     var conn: HttpURLConnection? = null
     return try {
-        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + java.net.URLEncoder.encode(key.trim(), "UTF-8")
+        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + modelId.ifBlank { "gemini-3.5-flash-lite" } + ":generateContent?key=" + java.net.URLEncoder.encode(key.trim(), "UTF-8")
         conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 20000
