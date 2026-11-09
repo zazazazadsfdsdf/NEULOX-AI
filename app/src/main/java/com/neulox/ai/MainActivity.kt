@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,8 +40,10 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun NeuloxApp() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("neulox_settings", 0) }
     var tab by remember { mutableStateOf("Чат") }
-    var apiKey by remember { mutableStateOf("") }
+    var apiKey by remember { mutableStateOf(prefs.getString("gemini_api_key", "") ?: "") }
     var draft by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val messages = remember { mutableStateListOf<Pair<Boolean, String>>() }
@@ -68,7 +71,7 @@ private fun NeuloxApp() {
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("NEULOX AI", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
-                    Text("ТВОЙ ИИ-ПОМОЩНИК", color = Neon, fontSize = 9.sp, letterSpacing = 2.sp)
+                    Text("БЕСПЛАТНЫЙ GEMINI AI", color = Neon, fontSize = 9.sp, letterSpacing = 2.sp)
                 }
                 Icon(Icons.Default.Circle, contentDescription = null, tint = Neon, modifier = Modifier.size(9.dp))
                 Spacer(Modifier.width(6.dp))
@@ -91,18 +94,26 @@ private fun NeuloxApp() {
             when (tab) {
                 "Настройки" -> {
                     Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Настройки API", color = Neon, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                        Text("Вставь свой API-ключ совместимого провайдера. Он хранится только на этом устройстве.", color = Color.LightGray)
-                        OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(),
-                            label = { Text("API key") }, singleLine = true)
-                        Text("Модель: gpt-4o-mini", color = Color.LightGray, fontSize = 13.sp)
+                        Text("Настройки Gemini", color = Neon, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("Вставь бесплатный Gemini API key из Google AI Studio. Ключ сохраняется на этом устройстве.", color = Color.LightGray)
+                        OutlinedTextField(
+                            value = apiKey,
+                            onValueChange = {
+                                apiKey = it
+                                prefs.edit().putString("gemini_api_key", it).apply()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Gemini API key") },
+                            singleLine = true
+                        )
+                        Text("Модель: gemini-2.5-flash-lite", color = Color.LightGray, fontSize = 13.sp)
+                        Text("Бесплатный тариф имеет ограничения Google по запросам.", color = Color.Gray, fontSize = 12.sp)
                     }
                 }
                 "Файлы" -> {
                     Column(Modifier.fillMaxSize().padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Файлы", color = Neon, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                        Text("Здесь будет создание и просмотр HTML, JSON, TXT и других файлов.", color = Color.LightGray)
-                        Text("Первая версия приложения", color = Color.Gray, fontSize = 12.sp)
+                        Text("Создание и просмотр файлов появятся в следующем обновлении.", color = Color.LightGray)
                     }
                 }
                 else -> {
@@ -134,8 +145,9 @@ private fun NeuloxApp() {
                                 draft = ""
                                 messages.add(true to prompt)
                                 busy = true
+                                val coding = tab == "Код"
                                 scope.launch {
-                                    val answer = withContext(Dispatchers.IO) { requestAi(apiKey, prompt, tab == "Код") }
+                                    val answer = withContext(Dispatchers.IO) { requestGemini(apiKey, prompt, coding) }
                                     messages.add(false to answer)
                                     busy = false
                                 }
@@ -150,31 +162,47 @@ private fun NeuloxApp() {
     }
 }
 
-private fun requestAi(key: String, prompt: String, coding: Boolean): String {
-    if (key.isBlank()) return "Открой «Настройки» и добавь API-ключ, чтобы включить ответы ИИ."
+private fun requestGemini(key: String, prompt: String, coding: Boolean): String {
+    if (key.isBlank()) return "Открой «Настройки» и добавь бесплатный Gemini API-ключ из https://aistudio.google.com/app/apikey"
+    var conn: HttpURLConnection? = null
     return try {
-        val url = URL("https://api.openai.com/v1/chat/completions")
-        val conn = (url.openConnection() as HttpURLConnection).apply {
+        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + java.net.URLEncoder.encode(key.trim(), "UTF-8")
+        conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 20000
             readTimeout = 60000
             doOutput = true
-            setRequestProperty("Authorization", "Bearer $key")
             setRequestProperty("Content-Type", "application/json")
         }
         val system = if (coding) "Ты NEULOX CODE, опытный senior-разработчик. Отвечай по-русски, давай рабочий код и объясняй ошибки." else "Ты NEULOX AI, полезный ИИ-помощник. Отвечай по-русски ясно и точно."
-        val body = JSONObject().put("model", "gpt-4o-mini")
-            .put("messages", JSONArray()
-                .put(JSONObject().put("role", "system").put("content", system))
-                .put(JSONObject().put("role", "user").put("content", prompt)))
+        val body = JSONObject()
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
+            .put("contents", JSONArray().put(JSONObject()
+                .put("role", "user")
+                .put("parts", JSONArray().put(JSONObject().put("text", prompt)))))
+            .put("generationConfig", JSONObject().put("temperature", 0.7).put("maxOutputTokens", 2048))
         conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-        val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+        val code = conn.responseCode
+        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
         val response = stream.bufferedReader().use { it.readText() }
-        conn.disconnect()
         val json = JSONObject(response)
-        if (json.has("error")) json.getJSONObject("error").optString("message", "Ошибка API")
-        else json.getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content", "Пустой ответ")
+        if (code !in 200..299) {
+            val message = json.optJSONObject("error")?.optString("message") ?: "HTTP $code"
+            "Ошибка Gemini ($code): $message"
+        } else {
+            val candidates = json.optJSONArray("candidates")
+            val parts = candidates?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+            val answer = buildString {
+                if (parts != null) for (i in 0 until parts.length()) {
+                    val part = parts.optJSONObject(i)
+                    if (part != null) append(part.optString("text", ""))
+                }
+            }
+            answer.ifBlank { "Gemini не вернул текстовый ответ. Попробуй отправить запрос ещё раз." }
+        }
     } catch (e: Exception) {
-        "Не удалось связаться с API: ${e.message ?: "неизвестная ошибка"}"
+        "Не удалось связаться с Gemini: ${e.message ?: "неизвестная ошибка"}"
+    } finally {
+        conn?.disconnect()
     }
 }
