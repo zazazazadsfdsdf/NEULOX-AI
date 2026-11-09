@@ -19,14 +19,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
 
       - name: Build with Gradle
         if: hashFiles('gradlew') != ''
@@ -69,7 +68,7 @@ jobs:
           ls -lh dist/*.jar
 
       - name: Upload JAR artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: NEULOX-JAR-${{ github.run_number }}
           path: dist/*.jar
