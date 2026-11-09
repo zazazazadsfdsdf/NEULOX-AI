@@ -1,0 +1,77 @@
+name: Build Java JAR
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jar-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Compile and package JAR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Build with Gradle
+        if: hashFiles('gradlew') != ''
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon clean build
+
+      - name: Build with Maven
+        if: hashFiles('gradlew') == '' && hashFiles('pom.xml') != ''
+        run: mvn -B -ntp clean package
+
+      - name: Build plain Java project
+        if: hashFiles('gradlew') == '' && hashFiles('pom.xml') == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes dist
+          if [ -d src/main/java ]; then
+            find src/main/java -name '*.java' -print0 | xargs -0 -r javac --release 21 -d build/classes
+          else
+            find . -maxdepth 3 -name '*.java' -not -path './.git/*' -print0 | xargs -0 -r javac --release 21 -d build/classes
+          fi
+          if [ -z "$(find build/classes -type f -name '*.class' -print -quit)" ]; then
+            echo "No Java source files found. Add src/main/java/... or a Gradle/Maven project."
+            exit 1
+          fi
+          jar --create --file dist/NEULOX-output.jar -C build/classes .
+
+      - name: Collect JAR files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find build/libs target -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' -exec cp -n {} dist/ \; 2>/dev/null || true
+          if ! find dist -maxdepth 1 -type f -name '*.jar' -print -quit | grep -q .; then
+            echo "Build completed but no JAR was produced."
+            exit 1
+          fi
+          echo "JAR files:"
+          ls -lh dist/*.jar
+
+      - name: Upload JAR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEULOX-JAR-${{ github.run_number }}
+          path: dist/*.jar
+          if-no-files-found: error
+          retention-days: 14
